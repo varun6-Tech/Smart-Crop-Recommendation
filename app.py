@@ -66,16 +66,27 @@ def load_ml_models():
     
     missing_files = []
     if not model_path.exists():
-        missing_files.append(f"crop_model.pkl (Expected at: {model_path})")
+        missing_files.append(f"crop_model.pkl")
     if not scaler_path.exists():
-        missing_files.append(f"scaler.pkl (Expected at: {scaler_path})")
+        missing_files.append(f"scaler.pkl")
     if not encoder_path.exists():
-        missing_files.append(f"label_encoder.pkl (Expected at: {encoder_path})")
+        missing_files.append(f"label_encoder.pkl")
         
     if missing_files:
-        st.error(f"🚨 Missing Required Model Files:\n" + "\n".join(missing_files))
-        st.warning(f"Git might have ignored these files. Please check your `.gitignore` and ensure `.pkl` files are committed to the deployment repository.")
-        st.stop()
+        st.warning(f"🚨 Missing Required Model Files: {', '.join(missing_files)}. Auto-healing by regenerating models dynamically (this will take ~5 seconds)...")
+        try:
+            import train_model
+            train_model.train_and_save_model()
+            st.success("Models generated successfully!")
+            
+            if not model_path.exists():
+                st.error("Failed to write to filesystem. Streamlit Cloud might be restricting writes. You MUST push the `.pkl` files to GitHub manually.")
+                st.stop()
+        except Exception as e:
+            st.error("Failed to generate models dynamically.")
+            import traceback
+            st.code(traceback.format_exc())
+            st.stop()
     
     # Catch any hidden FileNotFoundError during joblib internal ops
     import traceback
@@ -222,7 +233,14 @@ def generate_pdf_report(report_data):
     
     logo_path = os.path.join(BASE_DIR, 'assets', 'logo.png')
     if os.path.exists(logo_path):
-        pdf.image(logo_path, x=(pdf.w - 15) / 2, y=10, w=15)
+        try:
+            pdf.image(logo_path, x=(pdf.w - 15) / 2, y=10, w=15)
+        except RuntimeError:
+            try:
+                # The file might actually be a JPEG saved with a .png extension
+                pdf.image(logo_path, x=(pdf.w - 15) / 2, y=10, w=15, type='JPG')
+            except Exception:
+                pass
         pdf.ln(15)
     
     # Calculate exact printable width to prevent FPDFException
@@ -292,7 +310,10 @@ def generate_pdf_report(report_data):
         }.items():
             write_detail(k, v)
             
-    return bytes(pdf.output())
+    output = pdf.output(dest='S')
+    if isinstance(output, str):
+        return output.encode('latin-1')
+    return bytes(output)
 
 # Authentication Guard
 if not st.session_state.authenticated:
